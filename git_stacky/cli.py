@@ -25,6 +25,7 @@ class WorkflowType(Enum):
 
 
 @click.group(context_settings=CLICK_CTX_CONFIG)
+@click.version_option()
 def cli():
     pass
 
