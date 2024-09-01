@@ -32,7 +32,6 @@ def cli():
 
 @cli.command()
 @click.argument("target", required=False)
-# no update
 @click.option("-n", "--no-update", is_flag=True, default=False, help="Do not update main.")
 def hack(target: str, no_update: bool) -> None:
     """
@@ -57,6 +56,7 @@ def hack(target: str, no_update: bool) -> None:
     if try_run("git status --porcelain"):
         cexit("current branch is dirty, aborting")
     start = current_branch()
+    target = target or start  # default to current branch
     if not start and not target:
         cexit("start and target branches empty (detached head and no target), aborting")
     validate_branches()
@@ -72,13 +72,11 @@ def hack(target: str, no_update: bool) -> None:
         else:
             must_run("git pull", loud=True)
 
-    # Just updating main, so ensure ending on the starting branch
-    if not target or target == main_branch:
-        if start != main_branch:
-            must_run(f"git checkout {start}", loud=True)
+    # Stay on main
+    if target == main_branch:
         return
 
-    # Create/switch to new stack
+    # Create/switch to stack
     if create_target:
         must_run(f"git branch {target}_base", loud=True)
         must_run(f"git checkout -b {target}", loud=True)
@@ -336,19 +334,19 @@ def validate_branches(target: str = "") -> None:
 
 def validate_target_hack_branch(target: str, main_branch: str) -> bool:
     """Validate the target branch for the hack command. Returns True iff the target needs to be created."""
-    if not target or target == main_branch:
+    if target == main_branch:
         return False
 
     target_exists = branch_exists(target)
     target_base_exists = branch_exists(f"{target}_base")
+
+    if not target_exists and not target_base_exists:
+        return True
     if target_exists and not target_base_exists:
         cexit(f"ERROR: target branch '{target}' exists, but base branch '{target}_base' does not, aborting")
     if not target_exists and target_base_exists:
         cexit(f"ERROR: base branch '{target}_base' exists, but target branch '{target}' does not, aborting")
-    if target_exists and target_base_exists:
-        log(f"WARNING: stack '{target}' already exists")
-        return False
-    return True
+    return False
 
 
 def strip_suffix(s: str, suffix: str) -> str:

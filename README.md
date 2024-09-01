@@ -56,7 +56,7 @@ Here's an example workflow:
 
 # 5. Force-delete banana stack
 (banana) git checkout apple
-(apple)  git stack stack -D banana
+(apple)  git stack stacks -D banana
 
 # History evolution
 # 1. (main)(apple_base) > apple1 > apple2 (apple)
