@@ -8,11 +8,15 @@ from typing import Optional
 
 import click
 
+DEBUG = False
+
 # Enable -h flag, rather than just --help
 # REF: https://click.palletsprojects.com/en/7.x/documentation/#help-parameter-customization
 CLICK_CTX_CONFIG = dict(
     help_option_names=["-h", "--help"],
 )
+
+Command = str | list[str]
 
 
 class WorkflowType(Enum):
@@ -49,36 +53,36 @@ def hack(target: str, no_update: bool) -> None:
     main_branch = main_branch_name()
 
     # Validate
-    must_run("git status --porcelain", "current branch is dirty, aborting")
+    if try_run("git status --porcelain"):
+        cexit("current branch is dirty, aborting")
     start = current_branch()
     if not start and not target:
-        log("start and target branches empty (detached head and no target), aborting")
-        return
+        cexit("start and target branches empty (detached head and no target), aborting")
     validate_branches()
     create_target = validate_target_hack_branch(target, main_branch)
 
     # Update main
     if start != main_branch:
-        must_run(f"git checkout {main_branch}")
+        must_run(f"git checkout {main_branch}", loud=True)
     if not no_update:
         if workflow == WorkflowType.FORK:
-            must_run(f"git pull upstream {main_branch}")
-            must_run(f"git push origin {main_branch}")
+            must_run(f"git pull upstream {main_branch}", loud=True)
+            must_run(f"git push origin {main_branch}", loud=True)
         else:
-            must_run("git pull")
+            must_run("git pull", loud=True)
 
     # Just updating main, so ensure ending on the starting branch
     if not target or target == main_branch:
         if start != main_branch:
-            must_run(f"git checkout {start}")
+            must_run(f"git checkout {start}", loud=True)
         return
 
     # Create/switch to new stack
     if create_target:
-        must_run(f"git branch {target}_base")
-        must_run(f"git checkout -b {target}")
+        must_run(f"git branch {target}_base", loud=True)
+        must_run(f"git checkout -b {target}", loud=True)
     else:
-        must_run(f"git checkout {target}")
+        must_run(f"git checkout {target}", loud=True)
 
 
 @cli.command()
@@ -104,9 +108,10 @@ def rebase(target: str, done: bool) -> None:
 
 @cli.command()
 @click.option("-g", "--graph", is_flag=True, default=False, help="Print a graph of all stacks.")
+@click.option("-n", "--max-count", type=int, help="Max commits to show in the graph.")
 @click.option("-d", "--delete", multiple=True, help="Delete a stack.")
 @click.option("-D", "--delete-force", multiple=True, help="Delete a stack forcefully.")
-def stacks(graph: bool, delete: tuple[str], delete_force: tuple[str]) -> None:
+def stacks(graph: bool, max_count: int, delete: tuple[str], delete_force: tuple[str]) -> None:
     """
     Manage and visualize stacks.
 
@@ -123,14 +128,17 @@ def stacks(graph: bool, delete: tuple[str], delete_force: tuple[str]) -> None:
             delete_stacks(list(delete_force), force=True)
         return
     if graph:
-        subprocess.run(
+        try_run(
             [
                 "git",
                 "log",
                 "--graph",
                 "--format=format:%C(auto)%h%C(reset) %C(cyan)(%cr)%C(reset)%C(auto)%d%C(reset) %s %C(dim white)- %an%C(reset)",
             ]
-            + get_stacks(),
+            + (["--max-count", str(max_count)] if max_count else [])
+            + get_stacks()
+            + [main_branch_name()],
+            loud=True,
         )
         return
     list_stacks()
@@ -147,12 +155,10 @@ def absorb() -> None:
         cexit("ERROR: git-absorb not installed, aborting")
     current = current_branch()
     if not current:
-        log("current branch not found (detached head), aborting")
-        return
+        cexit("current branch not found (detached head), aborting")
     if current not in get_stacks():
-        log("current branch is not a stack, aborting")
-        return
-    subprocess.run(
+        cexit("current branch is not a stack, aborting")
+    must_run(
         [
             "git",
             "-c",
@@ -163,7 +169,8 @@ def absorb() -> None:
             "--and-rebase",
             "--base",
             f"{current}_base",
-        ]
+        ],
+        loud=True,
     )
 
 
@@ -172,6 +179,8 @@ def rebase_only(target: str) -> None:
     br = must_run("git branch --show-current", "current branch not found, aborting")
     br_base = f"{br}_base"
 
+    if try_run("git status --porcelain"):
+        cexit("current branch is dirty, aborting")
     if not branch_exists(br):
         cexit(f"current branch '{br}' does not exist, aborting")
     if not branch_exists(br_base):
@@ -187,12 +196,13 @@ def rebase_only(target: str) -> None:
 
     save_rebase_args([target, br_base, br])
 
-    res = subprocess.run(["git", "rebase", "--onto", target, br_base, br], text=True, capture_output=True)
-    if res.returncode:
+    out, err, errcode = run(["git", "rebase", "--onto", target, br_base, br], loud=True)
+    if errcode:
+        click.echo()
+        click.echo(err)
+        click.echo()
         click.echo("WARNING: rebase failed")
         click.echo("RUN: 'git stack rebase --done' to complete rebase, after resolving conflicts")
-        click.echo()
-        click.echo(res.stderr)
         exit(1)
 
 
@@ -200,20 +210,17 @@ def rebase_done() -> None:
     """Finish rebasing a stack."""
     args = load_rebase_args()
     if len(args) != 3:
-        log("rebase arguments not found, aborting")
-        return
+        cexit("rebase arguments not found, aborting")
     target, br_base, br = args
 
     if not branch_exists(br):
-        log(f"branch '{br}' does not exist, aborting")
-        return
+        cexit(f"branch '{br}' does not exist, aborting")
     if not branch_exists(br_base):
-        log(f"base branch '{br_base}' does not exist, aborting")
-        return
+        cexit(f"base branch '{br_base}' does not exist, aborting")
 
-    must_run(f"git checkout {br_base}")
-    must_run(f"git reset --hard {target}")
-    must_run(f"git checkout {br}")
+    must_run(f"git checkout {br_base}", loud=True)
+    must_run(f"git reset --hard {target}", loud=True)
+    must_run(f"git checkout {br}", loud=True)
 
     clear_rebase_args()
 
@@ -243,9 +250,9 @@ def clear_rebase_args() -> None:
 
 def delete_stacks_all(force: bool = False) -> None:
     """Delete all stacks."""
-    stacks = get_stacks()
-    stacks = [s for s in stacks if s if not s == current_branch()]
-    delete_stacks(stacks, force)
+    ss = get_stacks()
+    ss = [s for s in ss if s if not s == current_branch()]
+    delete_stacks(ss, force)
 
 
 def delete_stacks(delete: list[str], force: bool = False) -> None:
@@ -256,27 +263,28 @@ def delete_stacks(delete: list[str], force: bool = False) -> None:
         log("no stacks to delete")
         return
 
-    res = subprocess.run(["git", "branch", "-D" if force else "-d"] + list(delete), text=True, capture_output=True)
-    if res.returncode:
-        log("ERROR: delete failed")
+    _, err, errcode = run(["git", "branch", "-D" if force else "-d"] + list(delete), loud=True)
+    if errcode:
         click.echo()
-        click.echo(res.stderr)
+        click.echo(err)
+        click.echo()
+        log("ERROR: delete failed")
         return
 
 
 def list_stacks() -> None:
     """List all tracked stacks."""
-    stacks = [f"* {s}" if s == current_branch() else f"  {s}" for s in get_stacks()]
-    if not stacks:
+    ss = [f"* {s}" if s == current_branch() else f"  {s}" for s in get_stacks()]
+    if not ss:
         return
-    click.echo("\n".join(stacks))
+    click.echo("\n".join(ss))
 
 
 def get_stacks() -> list[str]:
     """Return a list of tracked stacks."""
     branches = get_branches()
-    stacks = [b for b in branches if f"{b}_base" in branches]
-    return stacks
+    ss = [b for b in branches if f"{b}_base" in branches]
+    return ss
 
 
 def get_branches() -> list[str]:
@@ -316,12 +324,12 @@ def current_branch() -> str:
 
 def validate_branches(target: str = "") -> None:
     """Validate branch names."""
-    branches = get_branches()
-    stacks = get_stacks()
-    for b in branches:
+    bs = get_branches()
+    ss = get_stacks()
+    for b in bs:
         if b.endswith("_base_base"):
             log(f"WARNING: potentially colliding base branch '{b}' detected")
-        if b.endswith("_base") and strip_suffix(b, "_base") not in stacks:
+        if b.endswith("_base") and strip_suffix(b, "_base") not in ss:
             log(f"WARNING: potentially orphaned base branch '{b}' detected")
 
 
@@ -349,24 +357,33 @@ def strip_suffix(s: str, suffix: str) -> str:
     return s
 
 
-def run(command: str) -> tuple[str, str, int]:
+def run(command: Command, loud: bool = False) -> tuple[str, str, int]:
     """Run a shell command and return the output."""
-    res = subprocess.run(command, shell=True, text=True, capture_output=True)
-    return res.stdout.strip(), res.stderr.strip(), res.returncode
+    if DEBUG:
+        click.echo(f"DEBUG: {command}")
+    shell = isinstance(command, str)
+    if loud:
+        res = subprocess.run(command, shell=shell)
+        return "", "", res.returncode
+    else:
+        res = subprocess.run(command, shell=shell, text=True, capture_output=True)
+        return res.stdout.strip(), res.stderr.strip(), res.returncode
 
 
-def must_run(command: str, fail_msg: Optional[str] = None) -> str:
+def must_run(command: Command, fail_msg: Optional[str] = None, loud: bool = False) -> str:
     """Run a shell command and return the output, or exit on error."""
-    out, err, errcode = run(command)
+    out, err, errcode = run(command, loud=loud)
     if errcode:
-        msg = fail_msg or f"ERROR: failed to run command ({errcode}): {command}\n\n{err}"
+        msg = fail_msg or f"ERROR: failed to run command '{command}'"
+        if loud:
+            msg = fail_msg or f"ERROR: failed to run command '{command}'\n\n{out}\n\n{err}"
         cexit(msg)
     return out
 
 
-def try_run(command: str) -> Optional[str]:
+def try_run(command: Command, loud: bool = False) -> Optional[str]:
     """Run a shell command and return the output, or return None on error."""
-    out, _, errcode = run(command)
+    out, _, errcode = run(command, loud)
     if errcode:
         return ""
     return out
