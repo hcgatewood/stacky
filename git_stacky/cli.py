@@ -10,12 +10,6 @@ import click
 
 DEBUG = False
 
-# Enable -h flag, rather than just --help
-# REF: https://click.palletsprojects.com/en/7.x/documentation/#help-parameter-customization
-CLICK_CTX_CONFIG = dict(
-    help_option_names=["-h", "--help"],
-)
-
 Command = str | list[str]
 
 
@@ -24,7 +18,7 @@ class WorkflowType(Enum):
     FORK = "fork"
 
 
-@click.group(context_settings=CLICK_CTX_CONFIG)
+@click.group(context_settings=dict(help_option_names=["-h", "--help"]))
 @click.version_option()
 def cli():
     pass
