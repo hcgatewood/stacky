@@ -26,8 +26,10 @@ def cli():
 
 @cli.command()
 @click.argument("target", required=False)
+@click.option("-c", "--carry", is_flag=True, default=False, help="Carry current changes to the new stack.")
+@click.option("-m", "--main", is_flag=True, default=False, help="Stay on main, don't switch back to target.")
 @click.option("-n", "--no-update", is_flag=True, default=False, help="Do not update main.")
-def hack(target: str, no_update: bool) -> None:
+def hack(target: str, carry: bool, main: bool, no_update: bool) -> None:
     """
     Update main and optionally create a new stack.
 
@@ -47,8 +49,12 @@ def hack(target: str, no_update: bool) -> None:
     main_branch = main_branch_name()
 
     # Validate
-    if try_run("git status --porcelain"):
-        cexit("current branch is dirty, aborting")
+    dirty_changes = try_run("git status --porcelain")
+    if dirty_changes:
+        if carry:
+            must_run("git stash push --include-untracked", loud=True)
+        else:
+            cexit("current branch is dirty, aborting")
     start = current_branch()
     target = target or start  # default to current branch
     if not start and not target:
@@ -66,16 +72,17 @@ def hack(target: str, no_update: bool) -> None:
         else:
             must_run("git pull", loud=True)
 
-    # Stay on main
-    if target == main_branch:
-        return
-
     # Create/switch to stack
-    if create_target:
-        must_run(f"git branch {target}_base", loud=True)
-        must_run(f"git checkout -b {target}", loud=True)
-    else:
-        must_run(f"git checkout {target}", loud=True)
+    if target != main_branch and not main:
+        if create_target:
+            must_run(f"git branch {target}_base", loud=True)
+            must_run(f"git checkout -b {target}", loud=True)
+        else:
+            must_run(f"git checkout {target}", loud=True)
+
+    # Carry changes
+    if carry:
+        must_run("git stash pop", loud=True)
 
 
 @cli.command()
