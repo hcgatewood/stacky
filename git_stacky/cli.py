@@ -56,7 +56,7 @@ def hack(target: str, carry: bool, main: bool, no_update: bool) -> None:
         else:
             cexit("current branch is dirty, aborting")
     start = current_branch()
-    target = target or start  # default to current branch
+    target = target or start or (main_branch if main else None)  # default to current branch, else main if --main
     if not start and not target:
         cexit("start and target branches empty (detached head and no target), aborting")
     validate_branches()
