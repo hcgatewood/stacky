@@ -24,12 +24,12 @@ def cli():
     pass
 
 
-@cli.command()
+@cli.command("hack")
 @click.argument("target", required=False)
 @click.option("-c", "--carry", is_flag=True, default=False, help="Carry current changes to the new stack.")
 @click.option("-m", "--main", is_flag=True, default=False, help="Stay on main, don't switch back to target.")
 @click.option("-n", "--no-update", is_flag=True, default=False, help="Do not update main.")
-def hack(target: str, carry: bool, main: bool, no_update: bool) -> None:
+def hack_cmd(target: str, carry: bool, main: bool, no_update: bool) -> None:
     """
     Update main and optionally create a new stack.
 
@@ -85,10 +85,10 @@ def hack(target: str, carry: bool, main: bool, no_update: bool) -> None:
         must_run("git stash pop", loud=True)
 
 
-@cli.command()
+@cli.command("rebase")
 @click.argument("target", required=False)
 @click.option("-d", "--done", is_flag=True, default=False, help="Finish rebasing a stack.")
-def rebase(target: str, done: bool) -> None:
+def rebase_cmd(target: str, done: bool) -> None:
     """
     Rebase current stack onto main or the specified target.
 
@@ -106,12 +106,13 @@ def rebase(target: str, done: bool) -> None:
     rebase_done()
 
 
-@cli.command()
+@cli.command("stacks")
+@click.option("-l", "--list", "just_list", is_flag=True, default=False, help="List all stacks.")
 @click.option("-g", "--graph", is_flag=True, default=False, help="Print a graph of all stacks.")
 @click.option("-n", "--max-count", type=int, help="Max commits to show in the graph.")
 @click.option("-d", "--delete", multiple=True, help="Delete a stack.")
 @click.option("-D", "--delete-force", multiple=True, help="Delete a stack forcefully.")
-def stacks(graph: bool, max_count: int, delete: tuple[str], delete_force: tuple[str]) -> None:
+def stacks_cmd(just_list: bool, graph: bool, max_count: int, delete: tuple[str], delete_force: tuple[str]) -> None:
     """
     Manage and visualize stacks.
 
@@ -141,11 +142,11 @@ def stacks(graph: bool, max_count: int, delete: tuple[str], delete_force: tuple[
             loud=True,
         )
         return
-    list_stacks()
+    print_stacks(just_list)
 
 
-@cli.command()
-def absorb() -> None:
+@cli.command("absorb")
+def absorb_cmd() -> None:
     """
     Automatically absorb changes into the stack.
 
@@ -272,9 +273,9 @@ def delete_stacks(delete: list[str], force: bool = False) -> None:
         return
 
 
-def list_stacks() -> None:
+def print_stacks(just_list: bool = False) -> None:
     """List all tracked stacks."""
-    ss = [f"* {s}" if s == current_branch() else f"  {s}" for s in get_stacks()]
+    ss = get_stacks() if just_list else [f"* {s}" if s == current_branch() else f"  {s}" for s in get_stacks()]
     if not ss:
         return
     click.echo("\n".join(ss))
