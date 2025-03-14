@@ -27,9 +27,10 @@ def cli():
 @cli.command("hack")
 @click.argument("target", required=False)
 @click.option("-c", "--carry", is_flag=True, default=False, help="Carry current changes to the new stack.")
+@click.option("-x", "--fix", is_flag=True, default=False, help="You accidentally committed to main branch, so convert the changes to a stack.")
 @click.option("-m", "--main", is_flag=True, default=False, help="Stay on main, don't switch back to target.")
 @click.option("-n", "--no-update", is_flag=True, default=False, help="Do not update main.")
-def hack_cmd(target: str, carry: bool, main: bool, no_update: bool) -> None:
+def hack_cmd(target: str, carry: bool, fix: bool, main: bool, no_update: bool) -> None:
     """
     Update main and optionally create a new stack.
 
@@ -60,10 +61,26 @@ def hack_cmd(target: str, carry: bool, main: bool, no_update: bool) -> None:
     if not start and not target:
         cexit("start and target branches empty (detached head and no target), aborting")
     validate_branches()
-    create_target = validate_target_hack_branch(target, main_branch)
+    should_create_target = validate_target_hack_branch(target, main_branch)
+
+    # Fix accidental commit to main
+    if fix:
+        if not should_create_target:
+            cexit("target stack exists, aborting")
+        remote_main_branch = remote_main_branch_name(main_branch)
+        if branches_same_commit(main_branch, remote_main_branch):
+            cexit("local and remote main branches point to the same commit, aborting")
+        if not branch_is_ancestor(remote_main_branch, main_branch):
+            cexit("remote main branch is not an ancestor of local main branch, aborting")
+        must_run(f"git checkout {remote_main_branch}", loud=True)
+        must_run(f"git branch {target}_base", loud=True)
+        must_run(f"git checkout {main_branch}", loud=True)
+        must_run(f"git branch {target}", loud=True)
+        must_run(f"git reset --hard {remote_main_branch}", loud=True)
+        should_create_target = False
 
     # Update main
-    if start != main_branch:
+    if not (start == main_branch or fix):
         must_run(f"git checkout {main_branch}", loud=True)
     if not no_update:
         if workflow == WorkflowType.FORK:
@@ -73,8 +90,8 @@ def hack_cmd(target: str, carry: bool, main: bool, no_update: bool) -> None:
             must_run("git pull", loud=True)
 
     # Create/switch to stack
-    if target != main_branch and not main:
-        if create_target:
+    if not (target == main_branch or main):
+        if should_create_target:
             must_run(f"git branch {target}_base", loud=True)
             must_run(f"git checkout -b {target}", loud=True)
         else:
@@ -83,6 +100,9 @@ def hack_cmd(target: str, carry: bool, main: bool, no_update: bool) -> None:
     # Carry changes
     if carry:
         must_run("git stash pop", loud=True)
+
+    if fix:
+        warn(f"due to --fix, this didn't rebase your stack onto main; you may want to run 'git stack rebase'")
 
 
 @cli.command("rebase")
@@ -122,11 +142,11 @@ def stacks_cmd(just_list: bool, graph: bool, max_count: int, delete: tuple[str],
       stacks --graph             => graph all stacks
       stacks --delete FEATURE    => delete FEATURE stack
     """
-    if delete or delete_force:
-        if delete:
-            delete_stacks(list(delete))
-        if delete_force:
-            delete_stacks(list(delete_force), force=True)
+    if delete:
+        delete_stacks(list(delete))
+        return
+    if delete_force:
+        delete_stacks(list(delete_force), force=True)
         return
     if graph:
         try_run(
@@ -153,7 +173,7 @@ def absorb_cmd() -> None:
     Requires git-absorb to be installed.
     """
     if not try_run("git absorb -h"):
-        cexit("ERROR: git-absorb not installed, aborting")
+        cexit("git-absorb not installed, aborting")
     current = current_branch()
     if not current:
         cexit("current branch not found (detached head), aborting")
@@ -197,12 +217,12 @@ def rebase_only(target: str) -> None:
 
     save_rebase_args([target, br_base, br])
 
-    out, err, errcode = run(["git", "rebase", "--onto", target, br_base, br], loud=True)
+    _, stderr, errcode = run(["git", "rebase", "--onto", target, br_base, br], loud=True)
     if errcode:
         click.echo()
-        click.echo(err)
+        click.echo(stderr)
         click.echo()
-        click.echo("WARNING: rebase failed")
+        warn("rebase failed")
         click.echo("RUN: 'git stack rebase --done' to complete rebase, after resolving conflicts")
         exit(1)
 
@@ -264,12 +284,12 @@ def delete_stacks(delete: list[str], force: bool = False) -> None:
         log("no stacks to delete")
         return
 
-    _, err, errcode = run(["git", "branch", "-D" if force else "-d"] + list(delete), loud=True)
+    _, stderr, errcode = run(["git", "branch", "-D" if force else "-d"] + list(delete), loud=True)
     if errcode:
         click.echo()
-        click.echo(err)
+        click.echo(stderr)
         click.echo()
-        log("ERROR: delete failed")
+        warn("delete failed")
         return
 
 
@@ -306,6 +326,35 @@ def main_branch_name() -> str:
     return "master"
 
 
+def remote_main_branch_name(main_branch: str) -> str:
+    """Return the name of the remote main branch."""
+    origin = try_run(f"git config --get branch.{main_branch}.remote")
+    if not origin:
+        cexit(f"unable to determine remote origin for '{main_branch}', aborting")
+    remote_ref = try_run(f"git config --get branch.{main_branch}.merge")
+    if not remote_ref:
+        cexit(f"unable to determine remote tracking branch for '{main_branch}', aborting")
+    remote_branch = remote_ref.split("/")[-1]
+    return f"{origin}/{remote_branch}"
+
+
+def branches_same_commit(*branches: str) -> bool:
+    """Check if all branches point to the same commit."""
+    if not branches:
+        cexit("no branches provided to branches_same_commit, aborting")
+    commits = must_run(f"git rev-parse {' '.join(branches)}")
+    uniq = set(commits.split())
+    return len(uniq) == 1
+
+
+def branch_is_ancestor(ancestor: str, descendant: str) -> bool:
+    """Check if the ancestor branch is an ancestor of the descendant branch."""
+    if not ancestor or not descendant:
+        cexit("ancestor or descendant branch is empty, aborting")
+    _, _, errcode = run(f"git merge-base --is-ancestor {ancestor} {descendant}")
+    return errcode == 0
+
+
 def workflow_type() -> WorkflowType:
     """Return the type of Git workflow."""
     if try_run("git remote get-url upstream"):
@@ -323,15 +372,15 @@ def current_branch() -> str:
     return try_run("git branch --show-current")
 
 
-def validate_branches(target: str = "") -> None:
+def validate_branches() -> None:
     """Validate branch names."""
     bs = get_branches()
     ss = get_stacks()
     for b in bs:
         if b.endswith("_base_base"):
-            log(f"WARNING: potentially colliding base branch '{b}' detected")
+            warn(f"potentially colliding base branch '{b}' detected")
         if b.endswith("_base") and strip_suffix(b, "_base") not in ss:
-            log(f"WARNING: potentially orphaned base branch '{b}' detected")
+            warn(f"potentially orphaned base branch '{b}' detected")
 
 
 def validate_target_hack_branch(target: str, main_branch: str) -> bool:
@@ -345,9 +394,9 @@ def validate_target_hack_branch(target: str, main_branch: str) -> bool:
     if not target_exists and not target_base_exists:
         return True
     if target_exists and not target_base_exists:
-        cexit(f"ERROR: target branch '{target}' exists, but base branch '{target}_base' does not, aborting")
+        cexit(f"target branch '{target}' exists, but base branch '{target}_base' does not, aborting")
     if not target_exists and target_base_exists:
-        cexit(f"ERROR: base branch '{target}_base' exists, but target branch '{target}' does not, aborting")
+        cexit(f"base branch '{target}_base' exists, but target branch '{target}' does not, aborting")
     return False
 
 
@@ -359,7 +408,7 @@ def strip_suffix(s: str, suffix: str) -> str:
 
 
 def run(command: Command, loud: bool = False) -> tuple[str, str, int]:
-    """Run a shell command and return the output."""
+    """Run a shell command and return the (stdout, stderr, returncode)."""
     if DEBUG:
         click.echo(f"DEBUG: {command}")
     shell = isinstance(command, str)
@@ -373,32 +422,48 @@ def run(command: Command, loud: bool = False) -> tuple[str, str, int]:
 
 def must_run(command: Command, fail_msg: Optional[str] = None, loud: bool = False) -> str:
     """Run a shell command and return the output, or exit on error."""
-    out, err, errcode = run(command, loud=loud)
+    stdout, stderr, errcode = run(command, loud=loud)
     if errcode:
-        msg = fail_msg or f"ERROR: failed to run command '{command}'"
+        msg = fail_msg or f"failed to run command '{command}'"
         if loud:
-            msg = fail_msg or f"ERROR: failed to run command '{command}'\n\n{out}\n\n{err}"
+            msg = fail_msg or f"failed to run command '{command}'\n\n{stdout}\n\n{stderr}"
         cexit(msg)
-    return out
+    return stdout
 
 
-def try_run(command: Command, loud: bool = False) -> Optional[str]:
+def try_run(command: Command, loud: bool = False) -> str:
     """Run a shell command and return the output, or return None on error."""
-    out, _, errcode = run(command, loud)
+    stdout, _, errcode = run(command, loud)
     if errcode:
         return ""
-    return out
+    return stdout
+
+
+class Colors:
+    YELLOW = "\033[33m"
+    RED = "\033[31m"
+    RESET = "\033[0m"
 
 
 def cexit(msg: str) -> None:
     """Print an error message and exit."""
-    log(msg)
+    err(msg)
     sys.exit(1)
 
 
 def log(msg: str) -> None:
     """Print a message."""
     click.echo(fmt_log(msg))
+
+
+def warn(msg: str) -> None:
+    """Print a warning message."""
+    click.echo(f"{Colors.YELLOW}WARN: {msg}{Colors.RESET}")
+
+
+def err(msg: str) -> None:
+    """Print an error message."""
+    click.echo(f"{Colors.RED}ERROR: {msg}{Colors.RESET}")
 
 
 def fmt_log(msg: str) -> str:

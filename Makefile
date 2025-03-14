@@ -6,12 +6,11 @@ build: ## Build the package
 	poetry build
 
 install: build ## Dev install the package locally
-	pip install dist/*.whl
+	pip install --force-reinstall dist/*.whl
 
 uninstall: ## Dev uninstall the package locally
 	pip uninstall -y $(shell poetry version | cut -d ' ' -f 1)
 
-reinstall: uninstall install ## Dev reinstall the package locally
-
 publish: ## Publish the package to PyPI
+	rm -rf dist
 	poetry publish --build
