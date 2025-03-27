@@ -135,12 +135,13 @@ def rebase_cmd(target: str, done: bool) -> None:
 
 
 @cli.command("stacks")
-@click.option("-l", "--list", "just_list", is_flag=True, default=False, help="List all stacks.")
+@click.option("-l", "--list", "just_list", is_flag=True, default=False, help="List the names of all stacks.")
 @click.option("-g", "--graph", is_flag=True, default=False, help="Print a graph of all stacks.")
+@click.option("-m", "--main", is_flag=True, default=False, help="Print the main branch name.")
 @click.option("-n", "--max-count", type=int, help="Max commits to show in the graph.")
 @click.option("-d", "--delete", multiple=True, help="Delete a stack.")
 @click.option("-D", "--delete-force", multiple=True, help="Delete a stack forcefully.")
-def stacks_cmd(just_list: bool, graph: bool, max_count: int, delete: tuple[str], delete_force: tuple[str]) -> None:
+def stacks_cmd(just_list: bool, graph: bool, main: bool, max_count: int, delete: tuple[str], delete_force: tuple[str]) -> None:
     """
     Manage and visualize stacks.
 
@@ -150,11 +151,8 @@ def stacks_cmd(just_list: bool, graph: bool, max_count: int, delete: tuple[str],
       stacks --graph             => graph all stacks
       stacks --delete FEATURE    => delete FEATURE stack
     """
-    if delete:
-        delete_stacks(list(delete))
-        return
-    if delete_force:
-        delete_stacks(list(delete_force), force=True)
+    if main:
+        click.echo(main_branch_name())
         return
     if graph:
         try_run(
@@ -169,6 +167,12 @@ def stacks_cmd(just_list: bool, graph: bool, max_count: int, delete: tuple[str],
             + [main_branch_name()],
             loud=True,
         )
+        return
+    if delete:
+        delete_stacks(list(delete))
+        return
+    if delete_force:
+        delete_stacks(list(delete_force), force=True)
         return
     print_stacks(just_list)
 
