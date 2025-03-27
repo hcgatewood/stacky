@@ -18,6 +18,14 @@ class WorkflowType(Enum):
     FORK = "fork"
 
 
+def complete_git_target(_: click.Context, __: click.Parameter, incomplete: str) -> list[str]:
+    """Shell completion for git target argument."""
+    try:
+        return [t for t in get_common_targets() if is_subseq(incomplete, t)]
+    except click.ClickException:
+        return []
+
+
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))
 @click.version_option()
 def cli():
@@ -25,7 +33,7 @@ def cli():
 
 
 @cli.command("hack")
-@click.argument("target", required=False)
+@click.argument("target", required=False, shell_complete=complete_git_target)
 @click.option("-c", "--carry", is_flag=True, default=False, help="Carry current changes to the new stack.")
 @click.option("-x", "--fix", is_flag=True, default=False, help="You accidentally committed to main branch, so convert the changes to a stack.")
 @click.option("-m", "--main", is_flag=True, default=False, help="Stay on main, don't switch back to target.")
@@ -106,7 +114,7 @@ def hack_cmd(target: str, carry: bool, fix: bool, main: bool, no_update: bool) -
 
 
 @cli.command("rebase")
-@click.argument("target", required=False)
+@click.argument("target", required=False, shell_complete=complete_git_target)
 @click.option("-d", "--done", is_flag=True, default=False, help="Finish rebasing a stack.")
 def rebase_cmd(target: str, done: bool) -> None:
     """
@@ -301,6 +309,11 @@ def print_stacks(just_list: bool = False) -> None:
     click.echo("\n".join(ss))
 
 
+def get_common_targets() -> list[str]:
+    """Return a list of common Git targets."""
+    return get_stacks() + [main_branch_name()]
+
+
 def get_stacks() -> list[str]:
     """Return a list of tracked stacks."""
     branches = get_branches()
@@ -405,6 +418,12 @@ def strip_suffix(s: str, suffix: str) -> str:
     if s.endswith(suffix):
         return s[: -len(suffix)]
     return s
+
+
+def is_subseq(small: str, big: str):
+    """Check if small is a subsequence of big."""
+    it = iter(big)
+    return all(c in it for c in small)
 
 
 def run(command: Command, loud: bool = False) -> tuple[str, str, int]:
