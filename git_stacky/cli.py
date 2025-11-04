@@ -69,7 +69,7 @@ def hack_cmd(target: str, carry: bool, fix: bool, main: bool, no_update: bool) -
     if not start and not target:
         cexit("start and target branches empty (detached head and no target), aborting")
     validate_branches()
-    should_create_target = validate_target_hack_branch(target, main_branch)
+    should_create_target = validate_target_hack_branch(target, start, main_branch, main)
 
     # Fix accidental commit to main
     if fix:
@@ -400,9 +400,9 @@ def validate_branches() -> None:
             warn(f"potentially orphaned base branch '{b}' detected")
 
 
-def validate_target_hack_branch(target: str, main_branch: str) -> bool:
+def validate_target_hack_branch(target: str, start: str, main_branch: str, main: bool) -> bool:
     """Validate the target branch for the hack command. Returns True iff the target needs to be created."""
-    if target == main_branch:
+    if target == main_branch or (target == start and main):
         return False
 
     target_exists = branch_exists(target)
